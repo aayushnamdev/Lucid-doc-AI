@@ -113,6 +113,24 @@ def _trim_for_synthesis(
     return selected, "snippet"
 
 
+def _inject_architecture_section(md: str, mermaid: str) -> str:
+    block = f"\n## Architecture\n\n```mermaid\n{mermaid}\n```\n"
+    idx = md.find("\n## Reference")
+    if idx != -1:
+        return md[:idx] + block + md[idx:]
+    return md.rstrip() + "\n\n## Architecture\n\n```mermaid\n" + mermaid + "\n```\n"
+
+
+def _preflight_check() -> None:
+    """Verify the configured LLM provider responds before touching the output directory."""
+    try:
+        generate("Reply with one word.", "ping")
+    except Exception as e:
+        raise RuntimeError(
+            f"LLM provider check failed ({config.PROVIDER}/{config.MODEL}): {e}"
+        ) from e
+
+
 def _empty_graph(files: list[Path], repo_root: Path) -> RepoGraph:
     """Minimal graph with no edges — used when AST analysis fails."""
     nodes = {}
@@ -136,6 +154,9 @@ def run(
     def emit(msg: str) -> None:
         if on_progress:
             on_progress(msg)
+
+    emit("checking_provider")
+    _preflight_check()
 
     emit("cloning")
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -221,6 +242,7 @@ def run(
                         full_docs=selected,
                     ),
                 )
+                map_md = _inject_architecture_section(map_md, graph.mermaid_graph_text())
                 map_dest = output_dir / repo_name / "_OVERVIEW.md"
                 map_dest.parent.mkdir(parents=True, exist_ok=True)
                 map_dest.write_text(map_md, encoding="utf-8")

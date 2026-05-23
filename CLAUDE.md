@@ -13,7 +13,7 @@ Lucid is an AI-powered documentation generator. You give it a GitHub repo URL, i
 
 It was built as Phase 1 of Aayush's decade doctrine — the first project in a 10-year arc toward Staff/Principal Document Engineer. The brief philosophy: ship a janky V1 and spend months fixing it in public.
 
-**Current state:** Phase 1 skeleton is complete and working. The pipeline runs. The web UI works. The output is technically accurate but architecturally broken — it generates isolated per-file docs with no cross-linking, no narrative, no Diataxis structure. This is the known problem. Fixing it is the entire agenda for Phase 2+.
+**Current state (Day 05):** Phase 2 is confirmed working end-to-end. First live run completed against `python-dotenv` (21 docs, OpenAI / gpt-4.1-nano). `_OVERVIEW.md` now includes a deterministic `## Architecture` Mermaid dependency graph injected after synthesis. Web UI Mermaid rendering is wired but needs browser validation next session.
 
 ---
 
@@ -38,22 +38,24 @@ Most doc generators produce one type badly. Lucid's goal is to produce all four 
 
 ---
 
-## The Known Problem — "Translation Symptom"
+## The Translation Symptom — Fixed in Phase 2
 
-The current output reads like a translation, not documentation. Every `.md` file opens with `## Overview — This module provides...` There are zero cross-references. `decorators.md` never mentions it wraps `core.Command`. `_OVERVIEW.md` is a flat capabilities list.
+The Phase 1 output read like a translation: every file opened with `## Overview — This module provides...`, zero cross-references, flat `_OVERVIEW.md`. Root cause was architectural.
 
-**Root cause is architectural, not a model problem:**
+**All three causes have been fixed:**
 
-| Cause | Location | Effect |
+| Cause | Fix | Location |
 |---|---|---|
-| Per-file isolation | `lucid/pipeline.py:127-142` | Each file generated in parallel with no knowledge of other files |
-| Weak synthesis input | `lucid/pipeline.py:167` | Overview pass only sees 200-char snippets, never actual generated docs |
-| One generic template | `lucid/prompts.py:33-85` | No Diataxis typing, no "works with" instruction, no See Also |
+| One generic template | Diataxis Reference + Tutorial prompts; "See Also" mandated | `lucid/prompts.py` (full rewrite) |
+| Import graph as prose | `see_also()` returns structured link data; prompt injects it directly | `lucid/analyze.py` + `prompts.py` |
+| Synthesis saw 200-char snippets | `_trim_for_synthesis()` — tiered budget, full docs first | `lucid/pipeline.py` |
 
-**Switching models makes it cheaper. It does not fix this.** The fix is three file changes:
-1. `lucid/prompts.py` — rewrite to Diataxis-typed prompts
-2. `lucid/pipeline.py:167` — feed the synthesis pass the actual generated `.md` files
-3. Add a cross-linking pass that uses the import graph from `analyze.py` to inject "See also" sections
+**What the new output should look like:**
+- Per-file docs open with `# module.name` (level-1 heading), then `## Public API` table, then `## See Also` with real links
+- `_OVERVIEW.md` is a Tutorial — narrative, cross-linked, goal-oriented, not a flat list
+- Files that import each other link to each other
+
+**What's still not built:** How-to and Explanation doc types (Phase 3), test-extracted code examples, navigation index, per-file mini Mermaid diagrams (deferred).
 
 ---
 
@@ -94,10 +96,7 @@ Six dependencies: `anthropic`, `openai`, `fastapi`, `uvicorn[standard]`, `python
 **`.env.example`**
 Template for all three currently-wired providers. Copy to `.env` and fill in keys. Live `.env` is gitignored — never commit it.
 
-Current default: `LUCID_PROVIDER=anthropic`, `LUCID_MODEL=claude-haiku-4-5`
-**Recommended switch** (zero code changes, ~9× cheaper): `LUCID_PROVIDER=xai`, `LUCID_MODEL=grok-4.1-fast`
-
-Note: `.env.example` references `grok-4-1-fast` — some xAI model IDs were retired May 15 2026. Verify the current ID at docs.x.ai before using.
+Active config: `LUCID_PROVIDER=openai`, `LUCID_MODEL=gpt-4.1-nano`. Do not change to xAI (image-only key) or Anthropic (no credits). See Model Situation section for full details.
 
 → Open when: switching providers/models or adding a new provider's key.
 
@@ -132,35 +131,37 @@ To add a new provider (e.g. Gemini, DeepSeek, OpenRouter): add one `_call_X()` f
 
 ---
 
-**`lucid/prompts.py`** — **The biggest lever for output quality**
-Builds all prompts sent to the LLM. Four audience types (developer/manager/non-technical/end-user) × two prompt purposes (per-file doc, repository overview). Public functions: `build_system_prompt(audience)`, `build_user_prompt(filepath, code, relationships)`, `build_map_system_prompt(audience)`, `build_map_user_prompt(repo_name, tree, graph, summaries)`.
+**`lucid/prompts.py`** — **Phase 2 complete rewrite**
+Four public builders: `build_reference_prompt(audience)`, `build_reference_user_prompt(filepath, code, see_also)`, `build_tutorial_prompt(audience)`, `build_tutorial_user_prompt(repo_name, file_tree, graph_summary, entry_points, core_files, full_docs)`. `AUDIENCE_INSTRUCTIONS` is a tone modifier only — Diataxis structure is fixed regardless of audience.
 
-**This is the file that needs the most work.** The current per-file template generates one generic doc type regardless of audience — no Diataxis typing, no "works with" instruction, no See Also section. The template at `prompts.py:33-85` is what produces the "translation" output. Rewriting this to four Diataxis-typed prompts (Reference, Tutorial, How-to, Explanation) is the core Phase 2 work.
+Reference prompt: explicitly forbids `## Overview` and `This module provides...` openers. Mandates `# module.name` → `## Public API` table → `## Behaviour Notes` → `## See Also`.
+Tutorial prompt: used for `_OVERVIEW.md` synthesis only. Mandates narrative hook → `## Get Started` → `## Top Features` → `## How the Pieces Fit` → `## Reference`.
 
-→ Open when: improving doc output quality, adding Diataxis doc types, fixing the translation symptom, changing what sections the LLM is asked to produce.
+→ Open when: improving doc output quality, adding How-to or Explanation doc types, tweaking prompt structure.
 
 ---
 
-**`lucid/pipeline.py`** — **The orchestrator**
+**`lucid/pipeline.py`** — **The orchestrator (Phase 2 rewrite)**
 The main `run()` function. Four phases:
 
-1. **Clone** (`pipeline.py:91-99`) — `git clone --depth 1` into a temp directory
-2. **Analyze** (`pipeline.py:109-114`) — calls `analyze.py` to build the import graph
-3. **Per-file generation** (`pipeline.py:127-155`) — `ThreadPoolExecutor(max_workers=8)` fires one LLM call per Python file concurrently. Each call gets the full file source + relationship context from the import graph. Saves each result as `output/{repo_name}/{filepath}.md`.
-4. **Synthesis / overview** (`pipeline.py:157-177`) — one final LLM call that sees the file tree, import graph summary, and the first 200 chars of each generated doc. Writes `_OVERVIEW.md`.
+1. **Clone** — `git clone --depth 1` into a temp directory
+2. **Analyze** — calls `analyze.py` to build the import graph
+3. **Per-file generation** — `ThreadPoolExecutor(max_workers=8)`. Each file gets structured `see_also()` cross-link data injected into the prompt. Results stored in `full_docs` dict (full markdown, not snippets).
+4. **Synthesis** — `_trim_for_synthesis()` applies a tiered token budget (full docs → reference sections → 200-char snippets) then calls `build_tutorial_prompt` + `build_tutorial_user_prompt` with actual generated content. Emits `synthesizing:{count}:{tier}` SSE event.
 
-**The synthesis pass at `pipeline.py:167` is broken by design.** It needs to be fed the actual generated `.md` file contents, not 200-char snippets. This is the architectural change required to enable cross-linking and real narrative.
+New helpers: `_estimate_tokens()`, `_extract_reference_section()`, `_trim_for_synthesis()`.
 
-→ Open when: changing the pipeline phases, fixing the synthesis pass, adding a new pass (e.g. cross-linking pass), debugging run failures.
+→ Open when: changing the pipeline phases, adding a new pass (e.g. How-to clustering), debugging run failures, adjusting the synthesis token budget.
 
 ---
 
 **`lucid/analyze.py`** — **Pure AST, no LLM**
-Builds a `RepoGraph` from the cloned repo using Python's `ast` module. No LLM involved — this is static analysis only. Classifies every file as entry point, core (imported by ≥75th percentile of files), or internal. Builds the full import graph (who imports who). Provides `relationship_context(rel)` which generates the "Imported by X, depends on Y" strings that get injected into per-file prompts.
+Builds a `RepoGraph` from the cloned repo using Python's `ast` module. Classifies every file as entry point, core (imported by ≥75th percentile of files), or internal. Two public methods for cross-linking:
+- `relationship_context(rel)` — old method, returns English prose. Still present but no longer used by the pipeline.
+- `see_also(rel, audience, max_items=6)` — Phase 2 method. Returns `list[dict]` with keys `rel`, `role`, `kind`, `rank`. Filtered through `documented_set(audience)`. Used by `pipeline.py` to inject structured link data into every per-file prompt.
+- `mermaid_graph_text()` — Phase 2d method. Returns a `graph TD` Mermaid string for the full import graph. Walks `self.nodes` directly (not `see_also`) so it shows every file regardless of audience. Entry points styled green, core modules yellow. Used by `pipeline.py` to inject `## Architecture` into `_OVERVIEW.md`.
 
-**The import graph data here is already good.** The problem is that `prompts.py` only passes it as plain text context and doesn't instruct the LLM to turn it into "See also" links. The data is there — the instruction isn't.
-
-→ Open when: debugging import graph analysis, changing how files are classified, adding new graph features (e.g. call graph, class hierarchy).
+→ Open when: debugging import graph analysis, changing file classification logic, adding new graph features (call graph, class hierarchy).
 
 ---
 
@@ -219,8 +220,14 @@ Career and learning context documents. Not directly related to Lucid's code.
 
 Session notes written at the end of each work session. Always read the most recent one first.
 
-**`handoff/2026-05-20.md`** ← most recent
-Day 02 session. Vision lock. Translation symptom root cause confirmed. Stripe reverse-engineering. Diataxis framework connection. Model research. The three-file fix identified. Day 03 checklist.
+**`handoff/2026-05-23-day05.md`** ← most recent
+Day 05 session. First live Phase 2 run on `python-dotenv` (21 docs). Mermaid dependency graph added: `analyze.py` got `mermaid_graph_text()`, `pipeline.py` got `_inject_architecture_section()`, `web/index.html` got Mermaid CDN + render hook. `_OVERVIEW.md` now has `## Architecture` with a role-styled `graph TD`. Web UI Mermaid rendering wired but browser validation pending.
+
+**`handoff/2026-05-20-day03.md`**
+Day 03 session. Phase 2 implementation complete. `analyze.py` + `prompts.py` + `pipeline.py` all rewritten. Diataxis Reference + Tutorial prompts live. Synthesis pass reads full generated docs. Note: handoff says model was switched to xAI — that turned out to be a dead end (xAI key is image-only, model IDs invalid). Active provider is now OpenAI / gpt-4.1-nano.
+
+**`handoff/2026-05-20.md`**
+Day 02 session. Vision lock. Translation symptom root cause confirmed. Stripe reverse-engineering. Diataxis framework connection. Model research. The three-file fix identified.
 
 **`handoff/2026-05-16.md`**
 Day 01 session. Phase 1 build log. What worked, what didn't, bugs fixed. First run on python-dotenv.
@@ -231,24 +238,32 @@ Day 01 session. Phase 1 build log. What worked, what didn't, bugs fixed. First r
 
 ### `output/`
 
-Generated documentation from previous runs. Contains `output/click/` (25 docs from the click library — the run that confirmed the translation symptom). Not committed to git.
+Generated documentation from previous runs. Not committed to git.
+- `output/click/` — Phase 1 output (May 16). The canonical "translation symptom" example. Use for before/after comparison.
+- `output/python-dotenv/`, `output/tqdm/` — also Phase 1 output. Generated while xAI provider was broken — all runs failed silently, output was stale cached files.
 
-→ Open when: comparing old output to new output after a prompt/pipeline change.
+The first clean Phase 2 output will overwrite these when run with OpenAI.
+
+→ Open when: comparing Phase 1 vs Phase 2 output quality.
 
 ---
 
 ## Model Situation
 
-**Current default:** `claude-haiku-4-5` — $1.00 / $5.00 per 1M tokens, 200K context.
+**Current active provider:** `openai` / `gpt-4.1-nano`
 
-**Recommended immediate switch (zero code changes):**
 ```
-LUCID_PROVIDER=xai
-LUCID_MODEL=grok-4.1-fast
+LUCID_PROVIDER=openai
+LUCID_MODEL=gpt-4.1-nano
 ```
-Cost: $0.20 / $0.50 per 1M. ~5–10× cheaper. Already wired in `llm.py`. 2M context window.
 
-**Best long-term pick:** DeepSeek V4 Flash ($0.112 / $0.224) — requires adding OpenRouter or DeepSeek as a provider in `llm.py` (10 lines, OpenAI-compatible).
+This is the confirmed-working setup. gpt-4.1-nano follows the Diataxis formatting instructions correctly.
+
+**Why not xAI:** The XAI_API_KEY in `.env` is scoped to image generation only (grok-imagine-image / grok-imagine-video). It has no access to chat completions. To use xAI, create a new API key at console.x.ai with Chat Completions enabled. Correct model name is `grok-4.3`.
+
+**Why not Anthropic:** No credits on this account.
+
+**Available OpenAI models if gpt-4.1-nano quality is insufficient:** `gpt-4.1-mini` (better, slightly more expensive), `gpt-4.1` (full model).
 
 Full details in `docs/models-2026.md`.
 
@@ -259,9 +274,11 @@ Full details in `docs/models-2026.md`.
 | Phase | Status | What it is |
 |---|---|---|
 | Phase 1 | ✅ Done | Pipeline skeleton — clone, analyze, generate, save. CLI + web UI. |
-| Phase 2a | 🔴 Next | Rewrite `prompts.py` — Diataxis-typed prompts (Reference + Tutorial at minimum) |
-| Phase 2b | 🔴 Next | Fix synthesis pass — feed actual generated docs, not 200-char snippets |
-| Phase 2c | 🔴 Next | Cross-linking pass — inject "See also" from import graph into each doc |
+| Phase 2a | ✅ Done | Rewrite `prompts.py` — Diataxis Reference + Tutorial prompts, See Also instruction |
+| Phase 2b | ✅ Done | Fix synthesis pass — feeds full generated `.md` content (tiered budget) |
+| Phase 2c | ✅ Done | `analyze.py` `see_also()` + structured cross-link injection into per-file prompt |
+| Phase 2d | ✅ Done | Mermaid architecture diagram in `_OVERVIEW.md` — deterministic, role-styled `graph TD` |
+| Phase 2 live test | 🟡 Partial | `python-dotenv` ✅ — `click` comparison + `rich` stress test still pending |
 | Phase 3 | ⬜ Future | Code validation — compare generated param names against real AST |
 | Phase 4 | ⬜ Future | Diff-based incremental updates |
 | Phase 5 | ⬜ Future | Run on a real open source project, submit a PR |
@@ -291,7 +308,7 @@ python cli.py https://github.com/username/repo --audience developer
 
 2. **Stripe as the benchmark.** When in doubt about output quality, ask: would this pass as a Stripe docs page? If not, the prompt is the first place to look.
 
-3. **The import graph is already there.** `analyze.py` builds the full cross-reference map. The problem is not data — it's that `prompts.py` doesn't instruct the LLM to turn that data into linked documentation.
+3. **The import graph is wired in.** `analyze.py` builds the full cross-reference map. Phase 2 wired it into `see_also()` and the per-file prompt injects it as structured link data. The LLM is now told exactly what to link and where.
 
 4. **Don't swap models to fix quality.** Model swaps are a cost lever. Quality is a prompting and pipeline architecture problem.
 

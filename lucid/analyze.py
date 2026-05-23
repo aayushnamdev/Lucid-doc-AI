@@ -158,6 +158,41 @@ class RepoGraph:
         lines.append(f"Core modules : {', '.join(self.core_files) or 'none'}")
         return "\n".join(lines)
 
+    def mermaid_graph_text(self) -> str:
+        """Mermaid graph TD string for the full import graph."""
+        def _id(rel: str) -> str:
+            return "n_" + "".join(c if c.isalnum() else "_" for c in rel)
+
+        lines = ["graph TD"]
+        lines.append("  classDef entry fill:#d1fae5,stroke:#2d6a4f,color:#1f1d1a")
+        lines.append("  classDef core fill:#fef9c3,stroke:#b45309,color:#1f1d1a")
+
+        entry_ids: list[str] = []
+        core_ids: list[str] = []
+
+        for rel in self.ranking:
+            node = self.nodes[rel]
+            nid = _id(rel)
+            label = node.module or rel
+            lines.append(f'  {nid}["{label}"]')
+            if node.is_entry_point:
+                entry_ids.append(nid)
+            elif node.is_core:
+                core_ids.append(nid)
+
+        for rel in self.ranking:
+            node = self.nodes[rel]
+            for imp in sorted(node.imports):
+                if imp in self.nodes:
+                    lines.append(f"  {_id(rel)} --> {_id(imp)}")
+
+        if entry_ids:
+            lines.append(f'  class {",".join(entry_ids)} entry')
+        if core_ids:
+            lines.append(f'  class {",".join(core_ids)} core')
+
+        return "\n".join(lines)
+
 
 # ── Module name helper ──────────────────────────────────────────────────────
 

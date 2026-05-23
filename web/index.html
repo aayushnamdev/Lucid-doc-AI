@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 <style>
   :root {
     --bg:        #fafaf7;
@@ -487,6 +488,15 @@
     color: var(--ink);
   }
 
+  .doc-body .mermaid {
+    background: none;
+    border: none;
+    padding: 0.5rem 0;
+    margin: 1.25rem 0;
+    text-align: center;
+    overflow-x: auto;
+  }
+
   .doc-body ul, .doc-body ol {
     padding-left: 1.5rem;
     margin-bottom: 1rem;
@@ -684,6 +694,8 @@
 </main>
 
 <script>
+  mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+
   let es = null;
   let fileItems = {};
   let doneCount = 0;
@@ -948,6 +960,19 @@
       body.innerHTML = marked.parse(content);
     } catch (err) {
       body.innerHTML = `<p style="color:var(--red);font-family:var(--mono);font-size:0.85rem">Failed to load: ${err.message}</p>`;
+      return;
+    }
+
+    // Mermaid rendering — outside the fetch try/catch so errors don't wipe the doc
+    body.querySelectorAll('code.language-mermaid').forEach(code => {
+      const div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = code.textContent;
+      (code.closest('pre') || code).replaceWith(div);
+    });
+    const mermaidNodes = Array.from(body.querySelectorAll('.mermaid'));
+    if (window.mermaid && mermaidNodes.length) {
+      mermaid.run({ nodes: mermaidNodes });
     }
   }
 
