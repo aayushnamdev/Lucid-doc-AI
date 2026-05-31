@@ -158,6 +158,15 @@ class RepoGraph:
         lines.append(f"Core modules : {', '.join(self.core_files) or 'none'}")
         return "\n".join(lines)
 
+    def ranking_paths(self, repo_root: Path) -> list[Path]:
+        """Return absolute paths for each file in ranking order."""
+        result = []
+        for rel in self.ranking:
+            p = repo_root / rel
+            if p.exists():
+                result.append(p)
+        return result
+
     def mermaid_graph_text(self) -> str:
         """Mermaid graph TD string for the full import graph."""
         def _id(rel: str) -> str:

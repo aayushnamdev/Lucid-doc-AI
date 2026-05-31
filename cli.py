@@ -17,7 +17,7 @@ def main() -> None:
     from lucid.pipeline import run
 
     def on_progress(msg: str) -> None:
-        parts = msg.split(":", 4)
+        parts = msg.split(":", 3)
         match parts[0]:
             case "cloning":
                 print(f"\n  Cloning {repo_url} ...")
@@ -25,33 +25,42 @@ def main() -> None:
                 print("  Analyzing import structure...")
             case "analyze_error":
                 print(f"  Structure analysis skipped: {parts[1] if len(parts) > 1 else ''}")
-            case "found":
-                print(f"  Found {parts[1]} Python files\n")
-            case "generating":
-                i, total, path = parts[1], parts[2], parts[3]
-                print(f"  [ ] [{i}/{total}] {path}", end="\r", flush=True)
-            case "done":
-                i, total, path = parts[1], parts[2], parts[3]
-                print(f"  [x] [{i}/{total}] {path}          ")
-            case "error":
-                i, total, path = parts[1], parts[2], parts[3]
-                err = parts[4] if len(parts) > 4 else ""
-                print(f"  [!] [{i}/{total}] {path} — {err}")
-            case "mapping":
-                print("\n  Generating repository overview...")
-            case "map_done":
-                print("  Repository overview saved.")
-            case "map_error":
-                print(f"  Overview skipped: {parts[1] if len(parts) > 1 else ''}")
+            case "outlining":
+                print(f"  Reading code outlines ({parts[1] if len(parts) > 1 else '?'} files)...")
+            case "html_pitch":
+                print("  Synthesizing pitch + flow (strong model)...")
+            case "html_pieces":
+                print("  Synthesizing piece map + key facts...")
+            case "html_honest":
+                print("  Synthesizing honest read + data flow...")
+            case "html_assembling":
+                print("  Building HTML page...")
+            case "html_done":
+                path = parts[1] if len(parts) > 1 else ""
+                print(f"  Page saved: output/{path}")
+            case "html_warn":
+                detail = ":".join(parts[1:]) if len(parts) > 1 else ""
+                print(f"  ! {detail}")
+            case "html_error":
+                detail = ":".join(parts[1:]) if len(parts) > 1 else ""
+                print(f"  ! HTML error: {detail}")
             case "no_python_files":
                 print("  No Python files found.")
             case "finished":
-                print("\n  All done.")
+                print("\n  Done.")
+
+    html_path: str | None = None
+
+    def on_progress_tracked(msg: str) -> None:
+        nonlocal html_path
+        if msg.startswith("html_done:"):
+            html_path = msg[len("html_done:"):]
+        on_progress(msg)
 
     try:
-        saved = run(repo_url, output_dir, on_progress, audience=audience)
-        if saved:
-            print(f"  Generated {len(saved)} docs in output/")
+        saved = run(repo_url, output_dir, on_progress_tracked, audience=audience)
+        if saved and html_path:
+            print(f"\n  Open in browser: open output/{html_path}")
     except Exception as e:
         print(f"\n  Error: {e}", file=sys.stderr)
         sys.exit(1)

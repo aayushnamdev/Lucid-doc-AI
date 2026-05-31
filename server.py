@@ -68,19 +68,23 @@ async def event_stream(job_id: str):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-@app.get("/files")
-async def list_docs():
-    if not OUTPUT_DIR.exists():
-        return {"files": []}
-    files = [str(p.relative_to(OUTPUT_DIR)) for p in sorted(OUTPUT_DIR.rglob("*.md"))]
-    return {"files": files}
-
-
-@app.get("/doc")
-async def get_doc(path: str):
-    target = (OUTPUT_DIR / path).resolve()
+@app.get("/html")
+async def get_html(repo: str):
+    target = (OUTPUT_DIR / repo / "index.html").resolve()
     if not str(target).startswith(str(OUTPUT_DIR.resolve())):
         raise HTTPException(403, "Access denied")
     if not target.exists():
         raise HTTPException(404, "Not found")
-    return {"content": target.read_text(encoding="utf-8")}
+    return FileResponse(target, media_type="text/html")
+
+
+@app.get("/repos")
+async def list_repos():
+    if not OUTPUT_DIR.exists():
+        return {"repos": []}
+    repos = sorted(
+        d.name
+        for d in OUTPUT_DIR.iterdir()
+        if d.is_dir() and (d / "index.html").exists()
+    )
+    return {"repos": repos}

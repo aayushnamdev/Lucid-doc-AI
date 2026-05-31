@@ -7,6 +7,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 PROVIDER = os.getenv("LUCID_PROVIDER", "anthropic").lower()
 MODEL = os.getenv("LUCID_MODEL", "claude-haiku-4-5")
+PITCH_MODEL = os.getenv("LUCID_PITCH_MODEL", MODEL)
 
 _VALID_AUDIENCES = {"developer", "manager", "non-technical", "end-user"}
 AUDIENCE = os.getenv("LUCID_AUDIENCE", "developer").lower()
